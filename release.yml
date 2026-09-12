@@ -1,0 +1,186 @@
+name: Release
+
+# Deliberately push-to-main only, not pull_request: this is the CD half of
+# the pipeline. Branch protection (see README) is what actually keeps
+# broken/unscanned code off main — by the time this runs, ci.yml and
+# security.yml have already passed as required status checks on the PR.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  group: release-${{ github.workflow }}
+  cancel-in-progress: false # never cancel a release mid-deploy
+
+jobs:
+  build-and-scan:
+    name: Build & scan image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
+
+      - name: Build image (not pushed yet)
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: local/shrtn:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: local/shrtn:${{ github.sha }}
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true # a CVE with no available fix yet isn't actionable — don't block the pipeline on it
+          format: sarif
+          output: trivy-image-results.sarif
+
+      - name: Upload scan results to the Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@8c78abb9b62512e3c45dea6559ffd924ed8549c8 # v3.28.0
+        with:
+          sarif_file: trivy-image-results.sarif
+
+  publish:
+    name: Publish to GHCR (signed, with SBOM)
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing via OIDC — no long-lived key in this repo at all
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
+
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@369eb591f429131d6889c46b94e711f089e6ca96 # v5.6.1
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - id: push
+        name: Build and push
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@df80a981bc6edbc4e220a492d3cbe9f5547a6e75 # v0.17.9
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: shrtn.spdx.json
+
+      - uses: sigstore/cosign-installer@1aa8e0f2454b781fbf0fbf306a4c9533a0c57409 # v3.7.0
+
+      - name: Sign image (keyless, via GitHub OIDC)
+        run: |
+          cosign sign --yes \
+            "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+
+      - name: Attest SBOM to the image
+        run: |
+          cosign attest --yes \
+            --predicate shrtn.spdx.json \
+            --type spdx \
+            "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+
+  deploy-staging:
+    name: Deploy to staging (gated)
+    needs: publish
+    runs-on: ubuntu-latest
+    # This is the point of a GitHub Environment: "staging" can carry
+    # required-reviewer protection rules configured in the repo settings, so
+    # this job literally cannot run until someone approves it — the same
+    # mechanism you'd use to gate a real production deploy.
+    environment:
+      name: staging
+    steps:
+      - name: Pull the image that was just signed and scanned
+        run: docker pull "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+
+      - name: Run it and smoke-test /healthz
+        run: |
+          set -euo pipefail
+          docker run -d --name shrtn-staging -p 8080:8080 \
+            "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+          for i in $(seq 1 15); do
+            if curl -fs http://localhost:8080/healthz; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::staging container never became healthy"
+          docker logs shrtn-staging
+          exit 1
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Deployed to staging :rocket:"
+            echo ""
+            echo "- Image: \`${REGISTRY}/${IMAGE_NAME}@${DIGEST}\`"
+            echo "- Signed with cosign (keyless) and attested with an SPDX SBOM"
+            echo ""
+            echo "This job stands in for a real deploy target (a \`kubectl set"
+            echo "image\`, \`helm upgrade\`, or \`aws ecs update-service\` call"
+            echo "would replace the run+smoke-test step above) — the point"
+            echo "demonstrated here is the *gate*: this job only ran because"
+            echo "the \`staging\` environment's required reviewers approved it."
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
