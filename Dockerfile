@@ -55,13 +55,25 @@ COPY app/ ./app/
 
 # Run as a non-root, non-login user — the single highest-value line in this
 # file from a container-scanning point of view (Trivy/hadolint both check).
+# A named user (rather than a raw numeric UID) is deliberate here: it's what
+# shows up in `docker ps`/`ps aux`/logs, which matters for a portfolio repo
+# meant to be read. hadolint's DL3066 (info-level, but this job's
+# failure-threshold is info) flags any non-numeric USER on principle — the
+# concern it's guarding against (a UID that doesn't resolve on the host)
+# doesn't apply to a container-only user like this one.
 RUN groupadd --system shrtn && useradd --system --gid shrtn --no-create-home shrtn \
     && mkdir -p /data \
     && chown -R shrtn:shrtn /app /data
+# hadolint ignore=DL3066
 USER shrtn
 
 EXPOSE 8080
 
+# hadolint's DL3025 wants HEALTHCHECK's CMD in JSON (exec) form, but the
+# `|| exit 1` fallback here is a shell construct — there's no JSON-array way
+# to express "run this, and if it fails, exit 1" without a wrapper script.
+# Shell form is the correct, intentional choice for this specific check.
+# hadolint ignore=DL3025
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
     CMD python -c "import urllib.request as u; u.urlopen('http://localhost:8080/healthz', timeout=2)" || exit 1
 
