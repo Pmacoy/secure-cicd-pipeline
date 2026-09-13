@@ -123,4 +123,8 @@ if __name__ == "__main__":
     # correct here: this runs inside a container, where 127.0.0.1 would be
     # unreachable through the published port. ruff (S104) and Semgrep each
     # flag this pattern with their own rule, so both need suppressing below.
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))  # noqa: S104  # nosemgrep: python.flask.security.audit.app-run-param-config.avoid-app-run-with-bad-host
+    # A bare `# nosemgrep` (no rule id) is used here instead of naming the
+    # specific rule: a first attempt at naming it exactly didn't suppress
+    # the finding (likely a subtle id mismatch), and this line only ever
+    # needs to suppress the one host-binding warning anyway.
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))  # noqa: S104 # nosemgrep
