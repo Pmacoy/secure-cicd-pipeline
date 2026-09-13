@@ -7,7 +7,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DB_PATH=/data/shrtn.db
 
+# python:3.13-slim's OS packages (perl, glibc, sqlite3, pcre2, gzip, ...)
+# are frozen at whatever was current when that image layer was published,
+# and accumulate real CVEs over time even though this app never touches
+# any of them directly — Trivy's image scan (not the filesystem scan,
+# which only sees our own tracked files) caught a batch of these.
+# Pulling Debian's own security-patched versions at build time, without
+# changing the base image tag, is the standard fix.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
+
+# Same idea for the Python-side tooling bundled into the base image
+# (pip/setuptools) — Trivy also flagged a setuptools path-traversal CVE.
+RUN pip install --no-cache-dir --upgrade pip setuptools
 
 # Install deps in their own layer so `docker build` cache is only busted by
 # requirements changes, not every code edit.
