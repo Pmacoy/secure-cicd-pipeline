@@ -23,6 +23,12 @@ warn_redundant_casts = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/ has no __init__.py, so pytest's default rootdir-insertion only adds
+# tests/ itself to sys.path, not the repo root — "app" stays unimportable
+# without this. (My own local validation used a hand-rolled runner that
+# added the repo root to sys.path directly, which is why this gap didn't
+# show up until real pytest ran in CI.)
+pythonpath = ["."]
 addopts = "--cov=app --cov-report=term-missing --cov-report=xml"
 
 [tool.coverage.run]

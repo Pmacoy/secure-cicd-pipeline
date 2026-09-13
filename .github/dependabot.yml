@@ -4,6 +4,13 @@ updates:
     directory: / # requirements-dev.txt (test/lint/scan tooling)
     schedule:
       interval: weekly
+    # A newly-published package version is a bigger supply-chain risk than
+    # an established one — a compromised release is usually caught and
+    # pulled within days. Waiting out a cooldown before proposing it is
+    # cheap insurance (this is also what Semgrep's default ruleset checks
+    # for, so it's enforced twice: here and in security.yml).
+    cooldown:
+      default-days: 7
     groups:
       python-dependencies:
         patterns: ["*"]
@@ -13,6 +20,8 @@ updates:
     directory: /app # app/requirements.txt (runtime deps shipped in the image)
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       python-dependencies:
         patterns: ["*"]
@@ -22,12 +31,16 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     labels: [dependencies, docker]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
