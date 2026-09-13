@@ -32,6 +32,25 @@ RUN pip install --no-cache-dir --upgrade pip setuptools
 COPY app/requirements.txt ./app/requirements.txt
 RUN pip install --no-cache-dir -r app/requirements.txt
 
+# A container running gunicorn/flask has no runtime need for a package
+# installer at all — pip is a build-time tool. Removing it (and
+# setuptools) here, rather than just upgrading them, is what actually
+# clears the last 2 Trivy findings from the earlier build: ensurepip
+# keeps a static, never-reinstalled copy of the pip/setuptools wheel it
+# originally bootstrapped from (untouched by `pip install --upgrade`
+# above), and pip itself vendors its own internal copy of msgpack (a
+# CacheControl dependency) that only pip's own maintainers can update.
+# Neither is reachable by upgrading what's "installed" — only by not
+# shipping pip/setuptools in the final image at all, which this app
+# never needed at runtime in the first place.
+RUN pip uninstall -y pip setuptools wheel || true \
+    && rm -rf /usr/local/lib/python3.13/ensurepip \
+              /usr/local/lib/python3.13/site-packages/pip* \
+              /usr/local/lib/python3.13/site-packages/setuptools* \
+              /usr/local/lib/python3.13/site-packages/wheel* \
+              /usr/local/lib/python3.13/site-packages/pkg_resources \
+              /usr/local/bin/pip*
+
 COPY app/ ./app/
 
 # Run as a non-root, non-login user — the single highest-value line in this
