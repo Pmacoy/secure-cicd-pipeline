@@ -73,17 +73,19 @@ jobs:
       # required — good general-purpose coverage (OWASP-style + language
       # best practices) without needing Semgrep App at all.
       #
-      # yaml.github-actions.security.github-actions-mutable-action-tag is
-      # excluded: its own rule message/example text (a "terraform.yml"
-      # snippet citing hashicorp/setup-terraform and
-      # terraform-linters/setup-tflint — actions this repo never uses, with
-      # a placeholder SHA containing a non-hex "S") is being emitted as if
-      # it were a real finding against this repo on every run, regardless
-      # of what's actually here. Every other action in our 4 workflow
-      # files is already confirmed SHA-pinned by hand.
+      # A "terraform.yml" citing hashicorp/setup-terraform and
+      # terraform-linters/setup-tflint (actions this repo never uses, with
+      # a placeholder SHA containing a non-hex "S") is reported as a
+      # finding on every run regardless of what's actually in this repo —
+      # confirmed noise, not a real match, and no such file is tracked by
+      # git here. A first attempt at excluding it by rule id
+      # (--exclude-rule) didn't work — the run's own "Rules run" count
+      # didn't drop, so the flag was a silent no-op for this Semgrep
+      # version. Excluding the phantom path directly instead, with the
+      # plainer and better-established --exclude flag.
       - run: >
           semgrep scan --config=p/ci --error --metrics=off
-          --exclude-rule yaml.github-actions.security.github-actions-mutable-action-tag
+          --exclude terraform.yml
           .
 
   dockerfile-lint:
