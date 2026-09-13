@@ -20,6 +20,11 @@ WORKDIR /app
 
 # Same idea for the Python-side tooling bundled into the base image
 # (pip/setuptools) — Trivy also flagged a setuptools path-traversal CVE.
+# Deliberately left unpinned: the whole point of this line is to always
+# grab whatever the current patched release is, which is the opposite of
+# pinning — so DL3013 is suppressed here rather than guessed at with a
+# hardcoded version number.
+# hadolint ignore=DL3013
 RUN pip install --no-cache-dir --upgrade pip setuptools
 
 # Install deps in their own layer so `docker build` cache is only busted by
