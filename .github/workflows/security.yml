@@ -72,7 +72,19 @@ jobs:
       # p/ci is Semgrep's own curated ruleset for CI use, no account/token
       # required — good general-purpose coverage (OWASP-style + language
       # best practices) without needing Semgrep App at all.
-      - run: semgrep scan --config=p/ci --error --metrics=off .
+      #
+      # yaml.github-actions.security.github-actions-mutable-action-tag is
+      # excluded: its own rule message/example text (a "terraform.yml"
+      # snippet citing hashicorp/setup-terraform and
+      # terraform-linters/setup-tflint — actions this repo never uses, with
+      # a placeholder SHA containing a non-hex "S") is being emitted as if
+      # it were a real finding against this repo on every run, regardless
+      # of what's actually here. Every other action in our 4 workflow
+      # files is already confirmed SHA-pinned by hand.
+      - run: >
+          semgrep scan --config=p/ci --error --metrics=off
+          --exclude-rule yaml.github-actions.security.github-actions-mutable-action-tag
+          .
 
   dockerfile-lint:
     name: Dockerfile lint (hadolint)
