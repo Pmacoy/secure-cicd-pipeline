@@ -83,11 +83,11 @@ def create_app(db_path: str | None = None) -> Flask:
         return jsonify(_serialize(link, request.host_url))
 
     @app.delete("/api/links/<code>")
-    def delete_link(code: str) -> tuple[Response, int]:
+    def delete_link(code: str) -> Response:
         deleted = db.delete_link(app.config["DB_PATH"], code)
         if not deleted:
             raise NotFound(description="no link with that code")
-        return "", 204
+        return Response(status=204)
 
     @app.get("/<code>")
     def follow_link(code: str):
